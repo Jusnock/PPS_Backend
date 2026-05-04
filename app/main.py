@@ -344,48 +344,42 @@ def finish_session(session_id: int, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 # ==========================================
-#        DASHBOARD Y PERFIL
+#        DASHBOARD Y REPORTES EJECUTIVOS
 # ==========================================
-@app.get("/users/me", response_model=schemas.UserResponse, tags=["Perfil"])
-def read_users_me(current_user: models.User = Depends(get_current_user)):
-    return current_user
 
-@app.get("/companies/{company_id}/stats", response_model=schemas.CompanyStatsResponse, tags=["Dashboard"])
-def get_dashboard_stats(company_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    if current_user.rol != "SUPERADMIN" and current_user.company_id != company_id:
-        raise HTTPException(status_code=403, detail="No puedes ver las estadísticas de otra empresa.")
-        
-    company = db.query(models.Company).filter(models.Company.id == company_id).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Empresa no encontrada")
-        
-    return schemas.CompanyStatsResponse(
-        total_empleados_registrados=len(company.users),
-        total_partidas_jugadas=0, 
-        tasa_acierto_global_porcentaje=0.0,
-        tiempo_promedio_segundos=0.0
-    )
-
-# app/main.py
-
-@app.get("/stats/dashboard")
+@app.get("/stats/dashboard", tags=["Dashboard"])
 def get_dashboard_stats(
-    quiz_id: Optional[int] = None, 
     company_id: Optional[int] = None,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Lógica de seguridad que ya tienes...
+    """
+    Devuelve las estadísticas y el nivel de riesgo de los empleados.
+    - ADMIN_EMPRESA: Solo ve los datos de su propia institución.
+    - SUPERADMIN: Ve los datos de la institución solicitada (o globales si no envía ID).
+    """
+    
+    # 1. Filtro de Seguridad y Permisos
     if current_user.rol == "ADMIN_EMPRESA":
         target_company_id = current_user.company_id
-        tipo_vista = "ADMIN_EMPRESA"
-    else:
+    elif current_user.rol == "SUPERADMIN":
         target_company_id = company_id
-        tipo_vista = "SUPERADMIN"
+    else:
+        raise HTTPException(status_code=403, detail="No tienes perfil de administrador para ver estos reportes.")
 
-    return crud.get_advanced_stats(
-        db=db, 
-        company_id=target_company_id, 
-        quiz_id=quiz_id, 
-        tipo_vista=tipo_vista
-    )
+    # 2. Llamada al "Cerebro" de datos en crud.py
+    if target_company_id:
+        # Reporte detallado de una empresa específica (Admin Local)
+        return crud.get_admin_dashboard_stats(db, company_id=target_company_id)
+    else:
+        # Reporte global de todas las empresas (SuperAdmin viendo el panorama general)
+        return crud.get_superadmin_dashboard_stats(db)
+    
+
+
+# ==========================================
+#        PERFIL DE USUARIO (LOGIN)
+# ==========================================
+@app.get("/users/me", response_model=schemas.UserResponse, tags=["Perfil"])
+def read_users_me(current_user: models.User = Depends(get_current_user)):
+    return current_user

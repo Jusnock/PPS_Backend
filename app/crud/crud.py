@@ -244,11 +244,49 @@ def create_session_answer(db: Session, answer: schemas.SessionAnswerCreate, sess
 
 
 # ==========================================
-#        ESTADÍSTICAS DEL DASHBOARD
+#        REPORTES DE EMPLEADOS (NUEVO)
 # ==========================================
 
+def calcular_nivel_riesgo(tasa_acierto: float) -> str:
+    if tasa_acierto >= 80:
+        return "Protegido"
+    elif tasa_acierto >= 50:
+        return "Vulnerable"
+    else:
+        return "En Riesgo"
+
+def get_user_report(db: Session, user_id: int):
+    # Buscamos todas las sesiones del usuario
+    sesiones = db.query(models.QuizSession).filter(models.QuizSession.user_id == user_id).all()
+    session_ids = [s.id for s in sesiones]
+    
+    # Buscamos las respuestas de esas sesiones
+    respuestas = db.query(models.SessionAnswer).filter(models.SessionAnswer.session_id.in_(session_ids)).all()
+    
+    if not respuestas:
+        return {
+            "total_respuestas": 0,
+            "tasa_acierto": 0.0,
+            "tiempo_promedio": 0.0,
+            "estado": "Sin Datos"
+        }
+        
+    total = len(respuestas)
+    aciertos = sum(1 for r in respuestas if r.acierto)
+    tasa_acierto = round((aciertos / total) * 100, 1)
+    
+    tiempo_total = sum(r.tiempo_en_segundos for r in respuestas if r.tiempo_en_segundos)
+    tiempo_promedio = round(tiempo_total / total, 1) if total > 0 else 0.0
+    
+    return {
+        "total_respuestas": total,
+        "tasa_acierto": tasa_acierto,
+        "tiempo_promedio": tiempo_promedio,
+        "estado": calcular_nivel_riesgo(tasa_acierto)
+    }
+
 # ==========================================
-#        NUEVAS ESTADÍSTICAS DEL DASHBOARD
+#        ESTADÍSTICAS DEL DASHBOARD
 # ==========================================
 
 def get_superadmin_dashboard_stats(db: Session):
@@ -256,15 +294,37 @@ def get_superadmin_dashboard_stats(db: Session):
     resultado = []
     
     for emp in empresas:
-        # Buscamos a los empleados de esta empresa
-        usuarios = db.query(models.User.id).filter(models.User.company_id == emp.id).all()
+        usuarios = db.query(models.User.id).filter(
+            models.User.company_id == emp.id,
+            models.User.rol == 'EMPLEADO'
+        ).all()
         user_ids = [u.id for u in usuarios]
         
-        # Buscamos las partidas que jugaron
+        if not user_ids:
+            resultado.append({
+                "empresa_nombre": emp.nombre,
+                "dominio": emp.dominio_google,
+                "empleados": 0,
+                "partidas": 0,
+                "tasa_acierto": 0.0,
+                "riesgo": 0.0
+            })
+            continue 
+            
         sesiones = db.query(models.QuizSession.id).filter(models.QuizSession.user_id.in_(user_ids)).all()
         session_ids = [s.id for s in sesiones]
         
-        # Buscamos las respuestas para sacar el promedio
+        if not session_ids:
+            resultado.append({
+                "empresa_nombre": emp.nombre,
+                "dominio": emp.dominio_google,
+                "empleados": len(user_ids),
+                "partidas": 0,
+                "tasa_acierto": 0.0,
+                "riesgo": 0.0
+            })
+            continue
+
         respuestas = db.query(models.SessionAnswer).filter(models.SessionAnswer.session_id.in_(session_ids)).all()
         
         if not respuestas:
@@ -286,77 +346,67 @@ def get_superadmin_dashboard_stats(db: Session):
 
 
 def get_admin_dashboard_stats(db: Session, company_id: int):
-    # Buscamos a los empleados de MI empresa
-    usuarios = db.query(models.User.id).filter(models.User.company_id == company_id).all()
+    # 1. Estadísticas Generales
+    usuarios = db.query(models.User).filter(
+        models.User.company_id == company_id,
+        models.User.rol == 'EMPLEADO'
+    ).all()
     user_ids = [u.id for u in usuarios]
     
-    # Obtenemos TODAS las campañas (quizzes)
-    quizzes = db.query(models.Quiz).all()
-    resultado = []
+    quizzes = db.query(models.Quiz).filter(
+        (models.Quiz.company_id == company_id) | (models.Quiz.company_id == None)
+    ).all()
     
+    campanas_stats = []
     for q in quizzes:
-        # Filtramos las sesiones de ESTA campaña jugadas SOLO por MIS empleados
-        sesiones = db.query(models.QuizSession.id).filter(
-            models.QuizSession.quiz_id == q.id,
-            models.QuizSession.user_id.in_(user_ids)
-        ).all()
-        session_ids = [s.id for s in sesiones]
-        
-        # Calculamos aciertos
-        respuestas = db.query(models.SessionAnswer).filter(models.SessionAnswer.session_id.in_(session_ids)).all()
-        
-        if not respuestas:
-            acierto = 0.0
+        if not user_ids:
+            acierto_pct = 0.0
+            session_ids = []
         else:
-            aciertos = sum(1 for r in respuestas if r.acierto)
-            acierto = round((aciertos / len(respuestas)) * 100, 1)
+            sesiones = db.query(models.QuizSession.id).filter(
+                models.QuizSession.quiz_id == q.id,
+                models.QuizSession.user_id.in_(user_ids)
+            ).all()
+            session_ids = [s.id for s in sesiones]
             
-        resultado.append({
+        if not session_ids:
+            respuestas = []
+        else:
+            respuestas = db.query(models.SessionAnswer).filter(models.SessionAnswer.session_id.in_(session_ids)).all()
+        
+        if respuestas:
+            aciertos = sum(1 for r in respuestas if r.acierto)
+            acierto_pct = round((aciertos / len(respuestas)) * 100, 1)
+        else:
+            acierto_pct = 0.0
+            
+        campanas_stats.append({
             "campana": q.titulo,
             "partidas": len(session_ids),
-            "tasa_acierto": acierto,
-            "riesgo": round(100 - acierto, 1) if len(session_ids) > 0 else 0.0
+            "tasa_acierto": acierto_pct,
+            "riesgo": round(100 - acierto_pct, 1) if len(session_ids) > 0 else 0.0
         })
-        
-    return resultado
 
-# app/crud/crud.py (Al final del archivo)
-
-def get_advanced_stats(db: Session, company_id: int | None, quiz_id: int | None, tipo_vista: str):
-    # Unimos las respuestas con la sesión, y la sesión con el usuario
-    query = db.query(models.SessionAnswer).join(
-        models.QuizSession, models.SessionAnswer.session_id == models.QuizSession.id
-    ).join(
-        models.User, models.QuizSession.user_id == models.User.id
-    )
-    
-    # Filtro 1: Si enviamos un company_id, filtramos solo esa empresa
-    if company_id:
-        query = query.filter(models.User.company_id == company_id)
-        
-    # Filtro 2: Si elegimos una campaña específica
-    if quiz_id:
-        query = query.filter(models.QuizSession.quiz_id == quiz_id)
-
-    respuestas = query.all()
-    
-    # Cálculos matemáticos
-    total = len(respuestas)
-    aciertos = len([r for r in respuestas if r.acierto])
-    fallos = total - aciertos
-    
-    tiempo_total = sum([r.tiempo_en_segundos for r in respuestas if r.tiempo_en_segundos])
-    tiempo_promedio = (tiempo_total / total) if total > 0 else 0
+    # 2. Reporte Detallado por Empleado
+    reporte_empleados = []
+    for u in usuarios:
+        # AHORA SÍ CONOCE ESTA FUNCIÓN PORQUE ESTÁ DECLARADA ARRIBA
+        stats = get_user_report(db, u.id)
+        if stats["total_respuestas"] > 0: 
+            reporte_empleados.append({
+                "id": u.id,
+                "nombre": u.nombre,
+                "email": u.email,
+                "aciertos": stats["tasa_acierto"],
+                "tiempo": stats["tiempo_promedio"],
+                "estado": stats["estado"]
+            })
+            
+    # Ordenamos a los empleados: los que están "En Riesgo" primero
+    orden_riesgo = {"En Riesgo": 0, "Vulnerable": 1, "Protegido": 2}
+    reporte_empleados.sort(key=lambda x: orden_riesgo.get(x["estado"], 3))
 
     return {
-        "tipo_vista": tipo_vista,
-        "resumen": {
-            "total_respuestas": total,
-            "tasa_acierto": (aciertos / total * 100) if total > 0 else 0,
-            "tiempo_promedio": tiempo_promedio
-        },
-        "grafico_rendimiento": [
-            {"name": "Aciertos", "value": aciertos, "fill": "#10b981"}, # Verde esmeralda
-            {"name": "Fallos", "value": fallos, "fill": "#ef4444"}      # Rojo peligro
-        ]
+        "campanas": campanas_stats,
+        "empleados": reporte_empleados
     }
