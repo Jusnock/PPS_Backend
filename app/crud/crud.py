@@ -206,16 +206,6 @@ def delete_quiz(db: Session, quiz_id: int):
         db.delete(db_quiz)
         db.commit()
     return db_quiz
-    
-    # MAGIA RELACIONAL: Buscamos las preguntas por sus IDs y las metemos al Quiz
-    if quiz.scenario_ids:
-        escenarios = db.query(models.Scenario).filter(models.Scenario.id.in_(quiz.scenario_ids)).all()
-        db_quiz.scenarios = escenarios
-
-    db.add(db_quiz)
-    db.commit()
-    db.refresh(db_quiz)
-    return db_quiz
 
 # --- SESIONES Y RESPUESTAS (SESSIONS) ---
 def create_quiz_session(db: Session, session: schemas.QuizSessionCreate, user_id: int):

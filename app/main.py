@@ -18,7 +18,7 @@ from app.schemas import schemas
 from app.crud import crud
 
 # 1. Crear las tablas en la base de datos si no existen
-Base.metadata.create_all(bind=engine)
+# Base.metadata.create_all(bind=engine)  # <-- COMENTADO: Ahora usamos Alembic para migraciones
 
 app = FastAPI(
     title="Fix & Play - Phishing Quiz API",
@@ -31,7 +31,11 @@ app = FastAPI(
 # ==========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], 
+    allow_origins=[
+        settings.FRONTEND_URL,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ], 
     allow_credentials=True,
     allow_methods=["*"], 
     allow_headers=["*"], 
@@ -113,7 +117,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": str(user.id), "rol": user.rol})
     
     # Redirigir al frontend con el token en la URL
-    return RedirectResponse(url=f"http://localhost:5173/login?token={access_token}")
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?token={access_token}")
 
 @app.post("/auth/login", tags=["Autenticación"])
 def login_manual(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
@@ -230,29 +234,6 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
 
     crud.delete_user(db=db, user_id=user_id)
     return {"detail": "Usuario eliminado exitosamente"}
-
-@app.put("/users/change-password")
-def cambiar_password_obligatorio(
-    request: schemas.PasswordChangeRequest, 
-    db: Session = Depends(get_db), 
-    current_user: models.User = Depends(get_current_user) # Esto obtiene al usuario logueado
-):
-    # 1. Buscamos al usuario en la base de datos
-    user = db.query(models.User).filter(models.User.id == current_user.id).first()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    # 2. Encriptamos la nueva contraseña (usa tu función de encriptar, ej. get_password_hash)
-    user.password = get_password_hash(request.nueva_password)
-    
-    # 3. ¡LA MAGIA! Apagamos la alarma para que no se lo vuelva a pedir
-    user.debe_cambiar_password = False 
-    
-    # 4. Guardamos los cambios
-    db.commit()
-    
-    return {"message": "Contraseña actualizada exitosamente"}
 
 # ==========================================
 #        ABM ESCENARIOS (Preguntas HTML)

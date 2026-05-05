@@ -1,8 +1,9 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from app.core.config import settings
 
-# Usamos las credenciales y el puerto que configuramos en el docker-compose.yml
-SQLALCHEMY_DATABASE_URL = "postgresql://admin:Sistemas1.@localhost:5432/phishing_quiz"
+# Usamos la URL de la base de datos desde la configuración
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
 # El engine es el motor principal que maneja la comunicación con Postgres
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
